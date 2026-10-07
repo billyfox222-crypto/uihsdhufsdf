@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boostball: City Circuit</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #101820; color: #f4f7fa; font: 15px system-ui, sans-serif;
+  }
+  .wrap { width: min(100vw, 1000px); padding: 14px; }
+  .top { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .title { font-weight: 800; letter-spacing: .08em; }
+  .help, .bottom { color: #b9c8d1; font-size: 13px; }
+  canvas { width: 100%; height: auto; display: block; border: 2px solid #50616d; border-radius: 12px; }
+  .bottom { padding: 8px 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="title">BOOSTBALL: CITY CIRCUIT</div>
+    <div class="help">WASD / arrows: drive · Space: boost · R: reset</div>
+  </div>
+  <canvas id="game" width="1000" height="650"></canvas>
+  <div class="bottom">Arcade mashup prototype: car soccer in a compact open city arena.</div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.querySelector("#game");
+  const ctx = canvas.getContext("2d");
+  const keys = new Set();
+
+  const car = { x: 260, y: 325, angle: 0, speed: 0, boost: 100 };
+  const ball = { x: 500, y: 325, vx: 0, vy: 0 };
+  let blueScore = 0;
+  let orangeScore = 0;
+
+  const buildings = [
+    [90, 90, 120, 65], [285, 72, 120, 95],
+    [560, 75, 145, 55], [800, 96, 110, 90],
+    [65, 490, 150, 75], [300, 500, 115, 75],
+    [565, 490, 135, 90], [810, 480, 115, 75]
+  ];
+
+  const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+  function resetPositions() {
+    car.x = 260; car.y = 325; car.angle = 0; car.speed = 0;
+    ball.x = 500; ball.y = 325; ball.vx = 0; ball.vy = 0;
+  }
+
+  addEventListener("keydown", (event) => {
+    const key = event.key.toLowerCase();
+    if (key.startsWith("arrow") || key === " ") event.preventDefault();
+    keys.add(key);
+    if (key === "r") resetPositions();
+  });
+  addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+
+  function update() {
+    const forward = keys.has("w") || keys.has("arrowup");
+    const reverse = keys.has("s") || keys.has("arrowdown");
+    const left = keys.has("a") || keys.has("arrowleft");
+    const right = keys.has("d") || keys.has("arrowright");
+    const boosting = keys.has(" ");
+
+    if (forward) car.speed += 0.13;
+    if (reverse) car.speed -= 0.10;
+
+    car.speed = clamp(car.speed * 0.989, -2.7, 5.2);
+
+    if (boosting && car.boost > 0 && car.speed > 0) {
+      car.speed += 0.12;
+      car.boost = Math.max(0, car.boost - 0.45);
+    } else {
+      car.boost = Math.min(100, car.boost + 0.12);
+    }
+
+    const steering = Number(right) - Number(left);
+    car.angle += steering * 0.045 *
+      (0.35 + Math.min(1, Math.abs(car.speed) / 3)) *
+      Math.sign(car.speed || 1);
+
+    car.x += Math.cos(car.angle) * car.speed;
+    car.y += Math.sin(car.angle) * car.speed;
+
+    if (car.x < 38 || car.x > 962) {
+      car.x = clamp(car.x, 38, 962);
+      car.speed *= -0.45;
+    }
+    if (car.y < 38 || car.y > 612) {
+      car.y = clamp(car.y, 38, 612);
+      car.speed *= -0.45;
+    }
+
+    // Buildings slow the car when it bumps into them.
+    for (const [bx, by, bw, bh] of buildings) {
+      const nearX = clamp(car.x, bx - 15, bx + bw + 15);
+      const nearY = clamp(car.y, by - 12, by + bh + 12);
+      if (Math.hypot(car.x - nearX, car.y - nearY) < 14) {
+        car.x -= Math.cos(car.angle) * car.speed;
+        car.y -= Math.sin(car.angle) * car.speed;
+        car.speed *= -0.4;
+      }
+    }
+
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+    ball.vx *= 0.992;
+    ball.vy *= 0.992;
+
+    if (ball.y < 54 || ball.y > 596) {
+      ball.y = clamp(ball.y, 54, 596);
+      ball.vy *= -0.8;
+    }
+
+    // Side walls leave openings for the goals.
+    if (ball.x < 55 && !(ball.y > 265 && ball.y < 385)) {
+      ball.x = 55;
+      ball.vx = Math.abs(ball.vx) * 0.8;
+    }
+    if (ball.x > 945 && !(ball.y > 265 && ball.y < 385)) {
+      ball.x = 945;
+      ball.vx = -Math.abs(ball.vx) * 0.8;
+    }
+
+    // Car-ball collision.
+    const dx = ball.x - car.x;
+    const dy = ball.y - car.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 33) {
+      const nx = dx / (distance || 1);
+      const ny = dy / (distance || 1);
+      const impact = Math.max(1.6, Math.abs(car.speed) * 0.78);
+
+      ball.x = car.x + nx * 33;
+      ball.y = car.y + ny * 33;
+      ball.vx += nx * impact + Math.cos(car.angle) * Math.max(0, car.speed) * 0.25;
+      ball.vy += ny * impact + Math.sin(car.angle) * Math.max(0, car.speed) * 0.25;
+      car.speed *= 0.82;
+    }
+
+    if (ball.x < 48 && ball.y > 265 && ball.y < 385) {
+      blueScore++;
+      resetPositions();
+    }
+    if (ball.x > 952 && ball.y > 265 && ball.y < 385) {
+      orangeScore++;
+      resetPositions();
+    }
+
+    // A simple training bot occasionally nudges the ball.
+    if (ball.x > 570 && Math.hypot(ball.x - 745, ball.y - 325) < 190) {
+      ball.vx -= Math.sign(ball.x - 745) * 0.035;
+      ball.vy += (ball.y > 325 ? 1 : -1) * 0.02;
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, 1000, 650);
+    ctx.fillStyle = "#182b31";
+    ctx.fillRect(0, 0, 1000, 650);
+
+    // City streets and buildings.
+    ctx.fillStyle = "#263b40";
+    for (let y = 105; y < 650; y += 90) ctx.fillRect(0, y, 1000, 22);
+    for (let x = 110; x < 1000; x += 100) ctx.fillRect(x, 0, 18, 650);
+
+    for (const [bx, by, bw, bh] of buildings) {
+      ctx.fillStyle = "#33484d";
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = "#64777a";
+      for (let x = bx + 12; x < bx + bw - 5; x += 24)
+        for (let y = by + 12; y < by + bh - 5; y += 24)
+          ctx.fillRect(x, y, 8, 7);
+    }
+
+    // Arena markings and goals.
+    ctx.strokeStyle = "#93aa9d";
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(38, 45, 924, 560);
+    ctx.beginPath();
+    ctx.moveTo(500, 45); ctx.lineTo(500, 605);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(500, 325, 85, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = "#1685ed";
+    ctx.fillRect(30, 265, 26, 120);
+    ctx.fillStyle = "#f57831";
+    ctx.fillRect(944, 265, 26, 120);
+
+    // Ball.
+    ctx.fillStyle = "#f7b637";
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, 20, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+
+    // Car.
+    ctx.save();
+    ctx.translate(car.x, car.y);
+    ctx.rotate(car.angle);
+    ctx.fillStyle = keys.has(" ") ? "#53d9ff" : "#23a6ff";
+    ctx.beginPath();
+    ctx.roundRect(-18, -12, 37, 24, 7);
+    ctx.fill();
+    ctx.fillStyle = "#c8f1ff";
+    ctx.fillRect(0, -8, 10, 16);
+    ctx.fillStyle = "#1a2730";
+    ctx.fillRect(-12, -14, 9, 4);
+    ctx.fillRect(10, -14, 8, 4);
+    ctx.fillRect(-12, 10, 9, 4);
+    ctx.fillRect(10, 10, 8, 4);
+    ctx.restore();
+
+    // Score and boost meter.
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.font = "bold 24px system-ui";
+    ctx.fillText(`${blueScore} : ${orangeScore}`, 500, 32);
+
+    ctx.fillStyle = "#17232b";
+    ctx.fillRect(24, 621, 180, 15);
+    ctx.fillStyle = "#35d6ff";
+    ctx.fillRect(24, 621, 180 * car.boost / 100, 15);
+    ctx.strokeStyle = "#9dafb4";
+    ctx.strokeRect(24, 621, 180, 15);
+    ctx.fillStyle = "white";
+    ctx.textAlign = "left";
+    ctx.font = "12px system-ui";
+    ctx.fillText("BOOST", 212, 633);
+  }
+
+  function frame() {
+    update();
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
